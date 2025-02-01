@@ -1,5 +1,16 @@
+# NVIM stuff
+main
+*.DS_Store
+
+# macOS system files
+.DS_Store
+
 # Prerequisites
 *.d
+
+# Logs
+*.log
+*.trace
 
 # Compiled Object files
 *.slo
@@ -30,3 +41,15 @@
 *.exe
 *.out
 *.app
+
+# NVIM swap files
+*.swp
+*.swo
+*.swn
+
+# NVIM backup files
+*.bak
+*.tmp
+
+# NVIM undo files
+*.un~
