@@ -4,16 +4,24 @@
 #include "wx/wx.h"
 #endif
 
-#define NORMAL 0
-#define VISUAL 1
-#define INSERT 2
-#define EXECUTE 3
-#define REPLACE 4
-#define SEARCH 5
+#include <thread>
+
+// markdown parsing (markdown string to HTML string)
+#include "../libcmark/cmark.h"
+
+// CURL for talking to pllam
+#include <curl/curl.h>
+
+// to parse json responses str into cpp
+// and also generate json to input into ollama
+// i wrote it lol check the docks its pretty decent
+#include "../libcjparse/cjparse.cpp"
+#include "../libcjparse/cjparse_json_generate.cpp"
 
 #include <wx/aui/auibook.h>
 #include <wx/event.h>
 #include <wx/stc/stc.h>
+#include <wx/webview.h>
 
 class private_llm_frame : public wxFrame
 {
