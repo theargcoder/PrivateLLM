@@ -4,6 +4,8 @@
 #include "wx/wx.h"
 #endif
 
+#include <atomic>
+#include <regex>
 #include <thread>
 
 // markdown parsing (markdown string to HTML string)
@@ -18,6 +20,7 @@
 #include "../libcjparse/cjparse.cpp"
 #include "../libcjparse/cjparse_json_generate.cpp"
 
+#include <wx/app.h>
 #include <wx/aui/auibook.h>
 #include <wx/event.h>
 #include <wx/stc/stc.h>
