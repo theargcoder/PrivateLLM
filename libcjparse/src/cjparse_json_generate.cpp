@@ -1,4 +1,4 @@
-#include "cjparse_json_generate.h"
+#include "../include/cjparse_json_generate.h"
 
 cjparse_json_generator::cjparse_json_generator (
     cjparse::cjparse_json_value &JSON, bool generate_pretty_json)
