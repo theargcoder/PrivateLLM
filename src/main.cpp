@@ -179,13 +179,9 @@ private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
             wxSizer *full_sizer = new wxBoxSizer (wxVERTICAL);
 
             std::thread ollama_thread ([this, model_name] () {
-                callOllama (
-                    markdown, model_name,
-                    "so i need you to integrate e^(ax^(2)) where a is a "
-                    "constant "
-                    "who's sign does not matter, also i need you to use "
-                    "proper math notation",
-                    cool_bruh);
+                callOllama (markdown, model_name,
+                            "give me 5 cool hikus about sleep in latex format",
+                            cool_bruh);
             });
 
             std::thread writer ([this, web] () {
@@ -222,7 +218,7 @@ private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
                                         if (str_response.find ("<think>")
                                             != std::string::npos)
                                             str_response
-                                                = R"(<div class="think">)";
+                                                = R"(<div class="think" id = "thinking">)";
                                         if (str_response.find ("</think>")
                                             != std::string::npos)
                                             str_response = R"(</div>)";
