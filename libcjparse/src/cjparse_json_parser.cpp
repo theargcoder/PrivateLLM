@@ -1,8 +1,25 @@
-#include "cjparse_json_parser.h"
+#include "../include/cjparse_json_parser.h"
 
 cjparse_json_parser::cjparse_json_parser (
     std::string &str, cjparse::cjparse_json_value &JSON_container)
 {
+    cjparse_parse_value (str, JSON_container);
+}
+
+cjparse_json_parser::cjparse_json_parser (
+    std::string &str, cjparse::cjparse_json_value &JSON_container,
+    std::string json_string_pattern_to_keep_raw)
+{
+    inside_str_ignore.push_back (json_string_pattern_to_keep_raw);
+    cjparse_parse_value (str, JSON_container);
+}
+
+cjparse_json_parser::cjparse_json_parser (
+    std::string &str, cjparse::cjparse_json_value &JSON_container,
+    std::vector<std::string> json_string_pattern_to_keep_raw)
+{
+    inside_str_ignore = json_string_pattern_to_keep_raw;
+
     cjparse_parse_value (str, JSON_container);
 }
 
@@ -29,6 +46,158 @@ cjparse_json_parser::check_what_is_the_value (std::string &str)
         return 0; // bad JSON
 };
 
+std::string
+cjparse_json_parser::decode_unicode (const std::string &raw_str)
+{
+    std::string result;
+    size_t i = 0;
+
+    while (i < raw_str.size ())
+        {
+            // Check if the current substring matches any raw pattern
+            bool is_raw = false;
+            if (!inside_str_ignore
+                     .empty ()) // Only check if there are patterns
+                {
+                    for (const auto &pattern : inside_str_ignore)
+                        {
+                            if (raw_str.compare (i, pattern.size (), pattern)
+                                == 0)
+                                {
+                                    result
+                                        += pattern; // Append raw pattern as-is
+                                    i += pattern.size ();
+                                    is_raw = true;
+                                    break; // Stop checking once a match is
+                                           // found
+                                }
+                        }
+                }
+            if (is_raw)
+                continue; // Skip further processing for this substring
+
+            if (raw_str[i] == '\\' && i + 1 < raw_str.size ())
+                {
+                    std::string escape_seq = raw_str.substr (
+                        i, 2); // Get two-character escape sequence
+
+                    // If the escape sequence is in inside_str_ignore, append
+                    // as-is
+                    if (std::find (inside_str_ignore.begin (),
+                                   inside_str_ignore.end (), escape_seq)
+                        != inside_str_ignore.end ())
+                        {
+                            result += escape_seq;
+                            i += 2;
+                            continue;
+                        }
+
+                    // Handle common escape sequences
+                    switch (raw_str[i + 1])
+                        {
+                        case 'n':
+                            result += '\n';
+                            i += 2;
+                            break;
+                        case 't':
+                            result += '\t';
+                            i += 2;
+                            break;
+                        case '"':
+                            result += '"';
+                            i += 2;
+                            break;
+                        case '\\':
+                            result += '\\';
+                            i += 2;
+                            break;
+
+                        case 'u': // Unicode escape sequence
+                            if (i + 5 < raw_str.size ())
+                                {
+                                    std::stringstream ss;
+                                    ss << std::hex
+                                       << raw_str.substr (i + 2, 4);
+                                    int codePoint;
+                                    ss >> codePoint;
+
+                                    if (codePoint >= 0xD800
+                                        && codePoint <= 0xDBFF
+                                        && i + 9 < raw_str.size ()
+                                        && raw_str[i + 6] == '\\'
+                                        && raw_str[i + 7] == 'u')
+                                        {
+                                            std::stringstream lowSurrogate;
+                                            lowSurrogate
+                                                << std::hex
+                                                << raw_str.substr (i + 8, 4);
+                                            int lowCodePoint;
+                                            lowSurrogate >> lowCodePoint;
+
+                                            codePoint
+                                                = ((codePoint - 0xD800) << 10)
+                                                  + (lowCodePoint - 0xDC00)
+                                                  + 0x10000;
+                                            i += 6;
+                                        }
+
+                                    if (codePoint <= 0x7F)
+                                        {
+                                            result += static_cast<char> (
+                                                codePoint);
+                                        }
+                                    else if (codePoint <= 0x7FF)
+                                        {
+                                            result += static_cast<char> (
+                                                (codePoint >> 6) | 0xC0);
+                                            result += static_cast<char> (
+                                                (codePoint & 0x3F) | 0x80);
+                                        }
+                                    else if (codePoint <= 0xFFFF)
+                                        {
+                                            result += static_cast<char> (
+                                                (codePoint >> 12) | 0xE0);
+                                            result += static_cast<char> (
+                                                ((codePoint >> 6) & 0x3F)
+                                                | 0x80);
+                                            result += static_cast<char> (
+                                                (codePoint & 0x3F) | 0x80);
+                                        }
+                                    else
+                                        {
+                                            result += static_cast<char> (
+                                                (codePoint >> 18) | 0xF0);
+                                            result += static_cast<char> (
+                                                ((codePoint >> 12) & 0x3F)
+                                                | 0x80);
+                                            result += static_cast<char> (
+                                                ((codePoint >> 6) & 0x3F)
+                                                | 0x80);
+                                            result += static_cast<char> (
+                                                (codePoint & 0x3F) | 0x80);
+                                        }
+
+                                    i += 6;
+                                }
+                            break;
+
+                        default:
+                            // If it's an unknown escape sequence, just add the
+                            // backslash as-is
+                            result += raw_str[i];
+                            i++;
+                        }
+                }
+            else
+                {
+                    result += raw_str[i];
+                    i++;
+                }
+        }
+
+    return result;
+}
+
 cjparse::json_string
 cjparse_json_parser::cjparse_parse_value_string (std::string &str)
 {
@@ -36,7 +205,10 @@ cjparse_json_parser::cjparse_parse_value_string (std::string &str)
     std::size_t en_of_string
         = return_the_matching_pattern (str, 0, '\"', '\"');
 
-    return str.substr (st_of_string + 1, en_of_string - st_of_string - 1);
+    std::string str_to_ret = decode_unicode (
+        str.substr (st_of_string + 1, en_of_string - st_of_string - 1));
+
+    return str_to_ret;
 }
 
 cjparse::json_number

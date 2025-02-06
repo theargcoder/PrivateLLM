@@ -1,8 +1,6 @@
 #include "../include/main.h"
 
-std::mutex buffer_mutex;
-std::string markdown;
-std::atomic<bool> cool_bruh = true;
+std::mutex buffer_mutex; // for thread safety
 
 class myApp : public wxApp
 {
@@ -133,77 +131,129 @@ private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
                                      wxDefaultPosition, wxDefaultSize);
 
     std::string output = execCommand ("ollama list");
+    std::cout << output << '\n';
     std::vector<std::array<std::string, 4> > models;
-    // Regex pattern to match NAME, ID, SIZE (with GB), and MODIFIED fields
-    std::regex pattern (R"((\S+)\s+(\S+)\s+(\d+\.\d+ GB)\s+(\d+ \w+ ago))");
+    // Updated regex to handle spacing and alignment
+    std::regex pattern (R"(^(\S+)\s+(\S+)\s+(\d+\.\d+\s+GB)\s+(.+?)\s*$)");
     std::smatch match;
 
-    std::string::const_iterator search_start (output.cbegin ());
-
-    while (std::regex_search (search_start, output.cend (), match, pattern))
+    // Split the output into lines
+    std::istringstream stream (output);
+    std::string line;
+    while (std::getline (stream, line))
         {
-            models.push_back ({ match[1], match[2], match[3], match[4] });
-            search_start = match.suffix ().first; // Move to next line
+            std::smatch match;
+            if (std::regex_match (line, match, pattern))
+                {
+                    if (match.size () >= 5)
+                        {
+                            models.push_back (
+                                { match[1].str (), match[2].str (),
+                                  match[3].str (), match[4].str () });
+                        }
+                }
         }
 
-    std::string model_name = models[0][0];
+    if (models.size () == 0)
+        {
+            // bewond fucked
+            wxString full_page = HTML_heading +
+                                 R"(<body>
+                  <title>Bro your ollama has no models</title>
+                  <p>open your terminal and run "substitute this for the model name</p>
+                  <p>
+                      you may also go to the official ollama webpage
+                      <a href="https://ollama.com"> ollama.com </a>
+                  to seek a better explanation of how to install models via the terminal
+                  </p>
+                  </body>)" + HTML_ending;
+            web->SetPage (full_page, "");
+        }
+    else
+        {
+            for (auto pp : models)
+                std::cout << pp[0] << '\n';
 
-    wxSizer *full_sizer = new wxBoxSizer (wxVERTICAL);
+            std::string model_name = models[0][0];
 
-    std::thread ollama_thread ([this, model_name] () {
-        callOllama (markdown, model_name, "i want to move to china",
+            wxSizer *full_sizer = new wxBoxSizer (wxVERTICAL);
+
+            std::thread ollama_thread ([this, model_name] () {
+                callOllama (
+                    markdown, model_name,
+                    "so i need you to integrate e^(ax^(2)) where a is a "
+                    "constant "
+                    "who's sign does not matter, also i need you to use "
+                    "proper math notation",
                     cool_bruh);
-    });
+            });
 
-    std::thread writer ([this, web] () {
-        std::cout << "technically we are updating the ui lol" << '\n';
-        while (cool_bruh)
-            {
-                buffer_mutex.lock ();
-                char *html = cmark_markdown_to_html (
-                    markdown.c_str (), markdown.size (),
-                    CMARK_OPT_NORMALIZE | CMARK_OPT_UNSAFE);
-                buffer_mutex.unlock ();
-                std::string html_str (html);
-                std::cout << "technically we are updating the ui lol"
-                          << markdown << '\n';
-                cjparse json (markdown);
+            std::thread writer ([this, web] () {
+                std::string html_cpy;
+                while (cool_bruh)
+                    {
+                        HTML_data = "";
+                        buffer_mutex.lock ();
+                        std::stringstream html_stream (markdown);
+                        buffer_mutex.unlock ();
+                        std::string line;
 
-                if (json.is_container_neither_object_or_array ())
-                    {
-                        return; // ollama responded with non
-                        // json we are beyond
-                        // fucked;
-                    }
-                if (json.is_container_an_object ())
-                    {
-                        cjparse::json_value response
-                            = json.return_the_value ("response");
-                        cjparse_json_generator generate
-                            = cjparse_json_generator (response, true);
-                        std::cout << generate.JSON_string << '\n';
-                        if (std::holds_alternative<std::string> (response))
+                        while (std::getline (html_stream, line))
                             {
-                                std::string str
-                                    = std::get<std::string> (response);
-                                wxString page = wxString (str) + '\n';
-                                wxGetApp ().CallAfter ([web, page] () {
-                                    web->SetPage (page, "");
-                                });
-                                free (html);
+                                std::vector<std::string> ignore_pattern{
+                                    R"(\\()", R"(\\))", R"(\\[)",
+                                    R"(\\])", R"(\()",  R"(\))",
+                                    R"(\[)",  R"(\])",  R"(\\)"
+                                };
+                                cjparse json (line, ignore_pattern);
+                                if (json.is_container_neither_object_or_array ())
+                                    {
+                                        break; // ollama responded with non
+                                        // json we are beyond
+                                        // fucked;
+                                    }
+                                if (json.is_container_an_object ())
+                                    {
+                                        cjparse::json_value response
+                                            = json.return_the_value (
+                                                "response");
+                                        std::string str_response
+                                            = std::get<std::string> (response);
+                                        if (str_response.find ("<think>")
+                                            != std::string::npos)
+                                            str_response
+                                                = R"(<div class="think">)";
+                                        if (str_response.find ("</think>")
+                                            != std::string::npos)
+                                            str_response = R"(</div>)";
+                                        HTML_data += str_response;
+                                    }
                             }
-                        else
-                            {
-                                std::cout << "shit is not a string bro"
-                                          << '\n';
-                            }
+                        char *html = cmark_markdown_to_html (
+                            HTML_data.c_str (), HTML_data.size (),
+                            CMARK_OPT_VALIDATE_UTF8 | CMARK_OPT_UNSAFE);
+
+                        wxString page
+                            = HTML_heading + wxString (html) + HTML_ending;
+                        html_cpy = std::string (page);
+                        wxGetApp ().CallAfter ([web, page] () {
+                            web->SetPage (page, "text/html;charset=UTF-8");
+                        });
+                        free (html);
+
                         std::this_thread::sleep_for (
                             std::chrono::milliseconds{ 200 });
                     }
-            }
-    });
-    ollama_thread.detach ();
-    writer.detach ();
+                std::cout << html_cpy << '\n';
+                std::cout << "\n\n\n\n\n\n\n";
+                std::cout << markdown << '\n';
+            });
+            ollama_thread.detach ();
+            writer.detach ();
 
-    web->SetPage (wxString ("<title> HI </title>"), "");
+            wxString full_page = HTML_heading
+                                 + "<title> PROCESSING \n 1 second bro</title>"
+                                 + HTML_ending;
+            web->SetPage (full_page, "");
+        }
 }

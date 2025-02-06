@@ -5,6 +5,7 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -25,6 +26,13 @@ class cjparse
   public:
     cjparse (std::string &str);
     cjparse (std::stringstream &file);
+
+    // both of the following overloads can ignore the patterns inputed into the
+    // second argument when parsing the JSON string ex.
+    //   you want to parse unicodes like \u3920 but ignore '\\(' or '\\)'
+    cjparse (std::string &str, std::string json_string_pattern_to_keep_raw);
+    cjparse (std::string &str,
+             std::vector<std::string> json_string_pattern_to_keep_raw);
 
   protected:
     friend class cjparse_json_parser;

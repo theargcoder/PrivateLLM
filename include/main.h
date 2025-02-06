@@ -4,6 +4,8 @@
 #include "wx/wx.h"
 #endif
 
+#include "../HTML.cpp"
+
 #include <atomic>
 #include <regex>
 #include <thread>
@@ -17,8 +19,9 @@
 // to parse json responses str into cpp
 // and also generate json to input into ollama
 // i wrote it lol check the docks its pretty decent
-#include "../libcjparse/cjparse.cpp"
-#include "../libcjparse/cjparse_json_generate.cpp"
+#include "../libcjparse/src/cjparse.cpp"
+#include "../libcjparse/src/cjparse_json_generate.cpp"
+#include "../libcjparse/src/cjparse_json_parser.cpp"
 
 #include <wx/app.h>
 #include <wx/aui/auibook.h>
@@ -36,6 +39,13 @@ class private_llm_frame : public wxFrame
                        int style = wxDEFAULT_FRAME_STYLE);
 
   private:
+    std::string markdown, HTML_data;
+    std::atomic<bool> cool_bruh = true;
+
+  private:
+    wxString HTML_heading = wxString (HTML_first);
+
+    wxString HTML_ending = wxString (HTML_last);
 };
 
 class private_llm_window : public wxAuiNotebook
