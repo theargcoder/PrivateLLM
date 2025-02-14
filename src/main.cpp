@@ -157,31 +157,22 @@ private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
     if (models.size () == 0)
         {
             // bewond fucked
-            wxString full_page = HTML_heading +
-                                 R"(<body>
-                  <title>Bro your ollama has no models</title>
-                  <p>open your terminal and run "substitute this for the model name</p>
-                  <p>
-                      you may also go to the official ollama webpage
-                      <a href="https://ollama.com"> ollama.com </a>
-                  to seek a better explanation of how to install models via the terminal
-                  </p>
-                  </body>)" + HTML_ending;
-            web->SetPage (full_page, "");
         }
     else
         {
             for (auto pp : models)
                 std::cout << pp[0] << '\n';
 
-            std::string model_name = models[0][0];
+            std::string model_name = models[1][0];
 
             wxSizer *full_sizer = new wxBoxSizer (wxVERTICAL);
 
             std::thread ollama_thread ([this, model_name] () {
-                callOllama (markdown, model_name,
-                            "give me 5 cool hikus about sleep in latex format",
-                            cool_bruh);
+                callOllama (
+                    markdown, model_name,
+                    "i need you to prove to me step by step using proper math "
+                    "notation the method of variation of parameters",
+                    cool_bruh);
             });
 
             std::thread writer ([this, web] () {
@@ -193,6 +184,7 @@ private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
                         std::stringstream html_stream (markdown);
                         buffer_mutex.unlock ();
                         std::string line;
+                        bool manually_close_div = false;
 
                         while (std::getline (html_stream, line))
                             {
@@ -221,20 +213,50 @@ private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
                                                 = R"(<div class="think" id = "thinking">)";
                                         if (str_response.find ("</think>")
                                             != std::string::npos)
-                                            str_response = R"(</div>)";
+                                            {
+                                                str_response = R"(</div>)";
+                                            }
+                                        else
+                                            {
+                                                manually_close_div = true;
+                                            }
                                         HTML_data += str_response;
                                     }
                             }
+                        if (manually_close_div)
+                            HTML_data += R"(</div>)";
                         char *html = cmark_markdown_to_html (
                             HTML_data.c_str (), HTML_data.size (),
                             CMARK_OPT_VALIDATE_UTF8 | CMARK_OPT_UNSAFE);
 
-                        wxString page
-                            = HTML_heading + wxString (html) + HTML_ending;
-                        html_cpy = std::string (page);
-                        wxGetApp ().CallAfter ([web, page] () {
-                            web->SetPage (page, "text/html;charset=UTF-8");
-                        });
+                        html_cpy = std::string (html);
+                        wxString wx_page = wxString (html);
+
+                        // Escape JavaScript special characters in the HTML
+                        // content
+                        wxString escaped_page = wx_page;
+                        escaped_page.Replace ("'", "\\'");
+                        escaped_page.Replace ("\"", "\\\"");
+                        escaped_page.Replace ("\n", "\\n");
+                        escaped_page.Replace ("\r", "");
+
+                        wxString js = R"delim(
+                            let content = document.getElementById('content');
+                            if (content) {
+                                let think = document.getElementById('thinking');
+                                if (think) {
+                                    let scrollPos = think.scrollTop;  // Save the scroll position of 'thinking'
+                                    let newContent = ')delim"
+                                      + escaped_page + R"delim("';
+                                    content.innerHTML = newContent;    // Update the innerHTML of 'content'
+                                    setTimeout(() => { think.scrollTop = scrollPos; }, 50);
+                                }
+                            }
+                        )delim";
+
+                        // Execute the JavaScript inside the WebView
+                        wxGetApp ().CallAfter (
+                            [web, js] () { web->RunScriptAsync (js, NULL); });
                         free (html);
 
                         std::this_thread::sleep_for (
@@ -247,9 +269,6 @@ private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
             ollama_thread.detach ();
             writer.detach ();
 
-            wxString full_page = HTML_heading
-                                 + "<title> PROCESSING \n 1 second bro</title>"
-                                 + HTML_ending;
-            web->SetPage (full_page, "");
+            web->SetPage (HTML_complete, "text/html;charset=UTF-8");
         }
 }

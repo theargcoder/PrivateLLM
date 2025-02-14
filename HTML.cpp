@@ -1,6 +1,5 @@
 #include <string>
-
-std::string HTML_first =
+std::string FULL_DOC =
     R"delim(
 <!doctype html>
 <html lang="en">
@@ -126,14 +125,14 @@ std::string HTML_first =
             </button>
          </div>
       </div>
-   </body>
-</html>
-)delim";
-
-std::string HTML_last =
-    R"delim(
-</body>
-<script>
+	<div class="content" id = "content">
+      <!-- Collapsible think div -->
+      <div class="think" id="thinking">
+         <p>activating/processing initial request</p>
+      </div>	
+     </div>
+      
+      <script>
         // JavaScript function to toggle the expanded state
         function toggleThink() {
             const thinkDiv = document.getElementById('thinking');
@@ -149,6 +148,7 @@ std::string HTML_last =
                 toggleButton.textContent = '\u2193'; // Downwards Arrow (↓)
             }
         }
-    </script>
+      </script>
+   </body>
 </html>
 )delim";

@@ -43,9 +43,7 @@ class private_llm_frame : public wxFrame
     std::atomic<bool> cool_bruh = true;
 
   private:
-    wxString HTML_heading = wxString (HTML_first);
-
-    wxString HTML_ending = wxString (HTML_last);
+    wxString HTML_complete = wxString (FULL_DOC);
 };
 
 class private_llm_window : public wxAuiNotebook
