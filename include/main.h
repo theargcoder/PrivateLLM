@@ -40,12 +40,30 @@ class private_llm_frame : public wxFrame
 
   private:
     std::string markdown, HTML_data;
-    std::atomic<bool> cool_bruh = true;
 
   private:
-    wxString HTML_heading = wxString (HTML_first);
+    wxString HTML_complete = wxString (FULL_DOC);
 
-    wxString HTML_ending = wxString (HTML_last);
+  private:
+    std::mutex buffer_mutex;          // for thread safety
+    std::condition_variable conditon; // for thread coordination
+    bool new_data = false;
+    bool done = false;
+
+  private:
+    bool isOllamaRunning ();
+    void startOllama ();
+    std::string execCommand (const char *cmd);
+    void callOllama (const std::string &model_name, const std::string &prompt);
+
+  private:
+    static size_t WriteCallback (void *contents, size_t size, size_t nmemb,
+                                 void *user_data);
+
+  private:
+    std::vector<std::string> ignore_pattern{ R"(\\()", R"(\\))", R"(\\[)",
+                                             R"(\\])", R"(\()",  R"(\))",
+                                             R"(\[)",  R"(\])",  R"(\\)" };
 };
 
 class private_llm_window : public wxAuiNotebook
@@ -53,6 +71,4 @@ class private_llm_window : public wxAuiNotebook
   public:
     private_llm_window (wxWindow *parent, wxWindowID ID, wxPoint &pos,
                         wxSize &size, long style);
-
-  private:
 };
