@@ -108,6 +108,30 @@ std::string FULL_DOC =
             color: rgb(35, 35, 35);
             margin-left: 10px;
          }
+         body,
+         html {
+            height: 100%;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+         }
+
+         .main {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+         }
+
+         .llm-input {
+            margin-top: auto; /* Pushes the text box to the bottom */
+            padding: 10px;
+         }
+
+         input {
+            width: 100%; /* Makes input take up full width of the container */
+            padding: 10px;
+            font-size: 16px;
+         }
       </style>
       <script>
          // Function to clean up the math block patterns
@@ -222,20 +246,30 @@ std::string FULL_DOC =
    </head>
    <body>
       <!-- Toggle button to expand/collapse the .think div -->
-      <div class="label-button-div">
-         <label class="toggle-label"> think </label>
-         <div class="button-div">
-            <button
-               class="toggle-button"
-               id="toggle-button"
-               onclick="toggleThink()"
-            >
-               ↓
-            </button>
+      <div class="main" id="main">
+         <div class="label-button-div">
+            <label class="toggle-label"> think </label>
+            <div class="button-div">
+               <button
+                  class="toggle-button"
+                  id="toggle-button"
+                  onclick="toggleThink()"
+               >
+                  ↓
+               </button>
+            </div>
          </div>
-      </div>
-      <div class="content" id="content">
-         <div class="think" id="thinking"></div>
+         <div class="content" id="content">
+            <div class="think" id="thinking"></div>
+         </div>
+         <div class="llm-input" id="llm-text-box-area">
+            <input
+               type="text"
+               name="llm-text-box"
+               spellcheck="true"
+               placeholder="Message your LLM"
+            />
+         </div>
       </div>
 
       <script>

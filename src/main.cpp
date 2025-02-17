@@ -8,7 +8,7 @@ class myApp : public wxApp
     {
         private_llm_frame *frame = new private_llm_frame (NULL);
         frame->Show ();
-        frame->SetSize (wxSize (500, 500));
+        frame->SetSize (wxSize (900, 500));
         frame->SetMinClientSize (wxSize (500, 500));
         return true;
     }
@@ -24,17 +24,19 @@ wxDECLARE_APP (myApp);
 wxIMPLEMENT_APP (myApp);
 
 size_t
-private_llm_frame::WriteCallback (void *contents, size_t size, size_t nmemb,
-                                  void *user_data)
+private_llm_window::WriteCallback (void *contents, size_t size, size_t nmemb,
+                                   void *user_data)
 {
     size_t totalSize = size * nmemb;
 
-    private_llm_frame *frame = static_cast<private_llm_frame *> (user_data);
+    std::cout << (char *)contents << '\n';
+
+    private_llm_window *window = static_cast<private_llm_window *> (user_data);
     {
-        std::lock_guard<std::mutex> lock (frame->buffer_mutex);
+        std::lock_guard<std::mutex> lock (window->buffer_mutex);
         std::string str_temp;
         str_temp.assign ((char *)contents, totalSize);
-        cjparse json (str_temp, frame->ignore_pattern);
+        cjparse json (str_temp, window->ignore_pattern);
         if (json.is_container_neither_object_or_array ())
             {
                 return totalSize; // ollama responded with non
@@ -47,11 +49,11 @@ private_llm_frame::WriteCallback (void *contents, size_t size, size_t nmemb,
                     = json.return_the_value ("response");
                 if (std::holds_alternative<std::string> (response))
                     {
-                        frame->markdown += std::get<std::string> (response);
-                        if (frame->markdown.find ('\n') != std::string::npos)
+                        window->markdown += std::get<std::string> (response);
+                        if (window->markdown.find ('\n') != std::string::npos)
                             {
-                                frame->new_data = true;
-                                frame->conditon.notify_one ();
+                                window->new_data = true;
+                                window->conditon.notify_one ();
                             }
                     }
                 else
@@ -67,14 +69,15 @@ private_llm_frame::WriteCallback (void *contents, size_t size, size_t nmemb,
                         if (done_bool)
                             {
                                 std::cout << "we are done here " << '\n';
-                                frame->done = true;
-                                frame->new_data = true;
-                                frame->conditon.notify_one ();
+                                window->done = true;
+                                window->new_data = true;
+                                window->conditon.notify_one ();
                             }
                     }
             }
         else if (json.is_container_an_array ())
             {
+                std::cout << "we got an array as a response.... " << '\n';
                 // process JSON array formatted response (shouldn't happen)
             }
     }
@@ -83,7 +86,7 @@ private_llm_frame::WriteCallback (void *contents, size_t size, size_t nmemb,
 }
 
 bool
-private_llm_frame::isOllamaRunning ()
+private_llm_window::isOllamaRunning ()
 {
     CURL *curl = curl_easy_init ();
     if (!curl)
@@ -99,7 +102,7 @@ private_llm_frame::isOllamaRunning ()
 }
 
 void
-private_llm_frame::startOllama ()
+private_llm_window::startOllama ()
 {
     std::cout << "Starting Ollama server..." << std::endl;
     std::system ("ollama serve &"); // Run in the background
@@ -108,8 +111,8 @@ private_llm_frame::startOllama ()
 
 // Function to call Ollama API
 void
-private_llm_frame::callOllama (const std::string &model_name,
-                               const std::string &prompt)
+private_llm_window::callOllama (const std::string &model_name,
+                                const std::string &prompt)
 {
     if (!isOllamaRunning ())
         {
@@ -137,7 +140,7 @@ private_llm_frame::callOllama (const std::string &model_name,
             curl_easy_setopt (curl, CURLOPT_POSTFIELDS, jsonData.c_str ());
             curl_easy_setopt (curl, CURLOPT_HTTPHEADER, headers);
             curl_easy_setopt (curl, CURLOPT_WRITEFUNCTION,
-                              private_llm_frame::WriteCallback);
+                              private_llm_window::WriteCallback);
             curl_easy_setopt (curl, CURLOPT_WRITEDATA, this);
 
             res = curl_easy_perform (curl);
@@ -155,7 +158,7 @@ private_llm_frame::callOllama (const std::string &model_name,
 }
 
 std::string
-private_llm_frame::execCommand (const char *cmd)
+private_llm_window::execCommand (const char *cmd)
 {
     std::array<char, 128> buffer;
     std::string result;
@@ -176,12 +179,15 @@ private_llm_frame::execCommand (const char *cmd)
     return result;
 }
 
-private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
-                                      wxPoint pos, wxSize size, int style)
-    : wxFrame (parent, id, title, pos, size, style)
+private_llm_window::private_llm_window (wxWindow *parent)
+    : wxWindow (parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
 {
-    wxWebView *web = wxWebView::New (this, wxID_ANY, wxWebViewDefaultURLStr,
-                                     wxDefaultPosition, wxDefaultSize);
+    wxSizer *sizer_v1 = new wxBoxSizer (wxVERTICAL);
+    wxSizer *sizer_v2 = new wxBoxSizer (wxVERTICAL);
+
+    wxPanel *panel = new wxPanel (this);
+    wxWebView *web = wxWebView::New (panel, wxID_ANY, wxWebViewDefaultURLStr,
+                                     wxDefaultPosition, wxSize (2000, 1000));
 
     std::string output = execCommand ("ollama list");
     std::cout << output << '\n';
@@ -221,26 +227,25 @@ private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
             wxSizer *full_sizer = new wxBoxSizer (wxVERTICAL);
 
             std::thread ollama_thread ([this, model_name] () {
-                callOllama (model_name,
-                            "i need the anti-derivative of e^(-x^2) "
-                            "with proper math notation");
+                callOllama (model_name, "hi deepbro");
             });
 
-            std::thread writer ([this, web] () {
+            writer = std::thread ([this, web] () {
                 std::string html_cpy;
                 bool inject_thinking = false;
-                while (true)
+
+                while (this->alive)
                     {
                         HTML_data = "";
                         char *html;
                         {
                             std::unique_lock<std::mutex> lock (
-                                private_llm_frame::buffer_mutex);
+                                this->buffer_mutex);
                             if (markdown.find ("<think>") != std::string::npos)
                                 {
                                     inject_thinking = true;
                                     markdown.clear ();
-                                    private_llm_frame::conditon.wait (
+                                    this->conditon.wait (
                                         lock, [this] { return new_data; });
                                     continue;
                                 }
@@ -249,7 +254,7 @@ private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
                                 {
                                     inject_thinking = false;
                                     markdown.clear ();
-                                    private_llm_frame::conditon.wait (
+                                    this->conditon.wait (
                                         lock, [this] { return new_data; });
                                     continue;
                                 }
@@ -260,8 +265,10 @@ private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
                                         CMARK_OPT_VALIDATE_UTF8
                                             | CMARK_OPT_UNSAFE);
                                     markdown.clear ();
-                                    private_llm_frame::conditon.wait (
+                                    this->conditon.wait (
                                         lock, [this] { return new_data; });
+                                    if (!this->alive)
+                                        break;
                                 }
                         }
 
@@ -278,6 +285,8 @@ private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
                         wx_page.Replace ("\b", "\\b");
 
                         wx_page = "\"" + wx_page + "\"";
+                        if (!this->alive)
+                            break;
                         wxString js;
                         if (!inject_thinking)
                             {
@@ -320,14 +329,39 @@ private_llm_frame::private_llm_frame (wxWindow *parent, int id, wxString title,
 
                         std::cout << html << '\n';
 
+                        if (!this->alive)
+                            break;
                         wxGetApp ().CallAfter (
                             [web, js] () { web->RunScriptAsync (js, NULL); });
 
-                        private_llm_frame::new_data = false;
+                        this->new_data = false;
                     }
             });
             web->SetPage (HTML_complete, "text/html;charset=UTF-8");
             ollama_thread.detach ();
             writer.detach ();
         }
+
+    sizer_v2->Add (web, 1, wxEXPAND | wxALL, 5);
+
+    panel->SetSizer (sizer_v2);
+    sizer_v1->Add (panel, 1, wxEXPAND | wxALL, 0);
+
+    this->SetSizer (sizer_v1);
+    this->Layout ();
+}
+
+private_llm_notebook::private_llm_notebook (wxWindow *parent, long style)
+    : wxAuiNotebook (parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, style)
+{
+    this->AddPage (new private_llm_window (this), "DeepSeek R1 1.5B Param",
+                   true);
+}
+
+private_llm_frame::private_llm_frame (wxWindow *parent)
+    : wxFrame (parent, wxID_ANY, "Demo", wxDefaultPosition, wxDefaultSize,
+               wxDEFAULT_FRAME_STYLE)
+{
+    private_llm_notebook *book
+        = new private_llm_notebook (this, wxAUI_NB_DEFAULT_STYLE);
 }

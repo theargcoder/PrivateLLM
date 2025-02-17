@@ -32,11 +32,34 @@
 class private_llm_frame : public wxFrame
 {
   public:
-    private_llm_frame (wxWindow *parent, int id = wxID_ANY,
-                       wxString title = "Demo",
-                       wxPoint pos = wxDefaultPosition,
-                       wxSize size = wxDefaultSize,
-                       int style = wxDEFAULT_FRAME_STYLE);
+    private_llm_frame (wxWindow *parent);
+};
+
+class private_llm_notebook : public wxAuiNotebook
+{
+  public:
+    private_llm_notebook (wxWindow *parent, long style);
+};
+
+class private_llm_window : public wxWindow
+{
+  public:
+    private_llm_window (wxWindow *parent);
+
+    ~private_llm_window ()
+    {
+        {
+            std::lock_guard<std::mutex> lock (this->buffer_mutex);
+            this->alive = false;
+            this->new_data = true;
+        }
+        this->conditon.notify_one (); // Notify outside the lock
+
+        if (this->writer.joinable ())
+            {
+                this->writer.join ();
+            }
+    }
 
   private:
     std::string markdown, HTML_data;
@@ -45,10 +68,12 @@ class private_llm_frame : public wxFrame
     wxString HTML_complete = wxString (FULL_DOC);
 
   private:
+    std::thread writer;
     std::mutex buffer_mutex;          // for thread safety
     std::condition_variable conditon; // for thread coordination
     bool new_data = false;
     bool done = false;
+    std::atomic<bool> alive{ true };
 
   private:
     bool isOllamaRunning ();
@@ -64,11 +89,4 @@ class private_llm_frame : public wxFrame
     std::vector<std::string> ignore_pattern{ R"(\\()", R"(\\))", R"(\\[)",
                                              R"(\\])", R"(\()",  R"(\))",
                                              R"(\[)",  R"(\])",  R"(\\)" };
-};
-
-class private_llm_window : public wxAuiNotebook
-{
-  public:
-    private_llm_window (wxWindow *parent, wxWindowID ID, wxPoint &pos,
-                        wxSize &size, long style);
 };
