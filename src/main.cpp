@@ -24,12 +24,10 @@ wxDECLARE_APP (myApp);
 wxIMPLEMENT_APP (myApp);
 
 size_t
-private_llm_window::WriteCallback (void *contents, size_t size, size_t nmemb,
-                                   void *user_data)
+private_llm_window::curl_write_callback (void *contents, size_t size,
+                                         size_t nmemb, void *user_data)
 {
     size_t totalSize = size * nmemb;
-
-    std::cout << (char *)contents << '\n';
 
     private_llm_window *window = static_cast<private_llm_window *> (user_data);
     {
@@ -39,6 +37,8 @@ private_llm_window::WriteCallback (void *contents, size_t size, size_t nmemb,
         cjparse json (str_temp, window->ignore_pattern);
         if (json.is_container_neither_object_or_array ())
             {
+                std::cout << "we got an NEITHER OBJ OR ARR as response.... "
+                          << '\n';
                 return totalSize; // ollama responded with non
                 // json we are beyond
                 // fucked;
@@ -69,8 +69,8 @@ private_llm_window::WriteCallback (void *contents, size_t size, size_t nmemb,
                         if (done_bool)
                             {
                                 std::cout << "we are done here " << '\n';
-                                window->done = true;
                                 window->new_data = true;
+                                window->done = true;
                                 window->conditon.notify_one ();
                             }
                     }
@@ -86,7 +86,7 @@ private_llm_window::WriteCallback (void *contents, size_t size, size_t nmemb,
 }
 
 bool
-private_llm_window::isOllamaRunning ()
+private_llm_window::is_ollama_running ()
 {
     CURL *curl = curl_easy_init ();
     if (!curl)
@@ -102,7 +102,7 @@ private_llm_window::isOllamaRunning ()
 }
 
 void
-private_llm_window::startOllama ()
+private_llm_window::start_ollama ()
 {
     std::cout << "Starting Ollama server..." << std::endl;
     std::system ("ollama serve &"); // Run in the background
@@ -111,12 +111,12 @@ private_llm_window::startOllama ()
 
 // Function to call Ollama API
 void
-private_llm_window::callOllama (const std::string &model_name,
-                                const std::string &prompt)
+private_llm_window::call_ollama (const std::string &model_name,
+                                 const std::string &prompt)
 {
-    if (!isOllamaRunning ())
+    if (!is_ollama_running ())
         {
-            startOllama (); // Start Ollama if it's not running
+            start_ollama (); // Start Ollama if it's not running
         }
 
     CURL *curl;
@@ -140,7 +140,7 @@ private_llm_window::callOllama (const std::string &model_name,
             curl_easy_setopt (curl, CURLOPT_POSTFIELDS, jsonData.c_str ());
             curl_easy_setopt (curl, CURLOPT_HTTPHEADER, headers);
             curl_easy_setopt (curl, CURLOPT_WRITEFUNCTION,
-                              private_llm_window::WriteCallback);
+                              private_llm_window::curl_write_callback);
             curl_easy_setopt (curl, CURLOPT_WRITEDATA, this);
 
             res = curl_easy_perform (curl);
@@ -158,7 +158,7 @@ private_llm_window::callOllama (const std::string &model_name,
 }
 
 std::string
-private_llm_window::execCommand (const char *cmd)
+private_llm_window::execute_command (const char *cmd)
 {
     std::array<char, 128> buffer;
     std::string result;
@@ -179,17 +179,10 @@ private_llm_window::execCommand (const char *cmd)
     return result;
 }
 
-private_llm_window::private_llm_window (wxWindow *parent)
-    : wxWindow (parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
+void
+private_llm_window::send_prompt (std::string &prompt)
 {
-    wxSizer *sizer_v1 = new wxBoxSizer (wxVERTICAL);
-    wxSizer *sizer_v2 = new wxBoxSizer (wxVERTICAL);
-
-    wxPanel *panel = new wxPanel (this);
-    wxWebView *web = wxWebView::New (panel, wxID_ANY, wxWebViewDefaultURLStr,
-                                     wxDefaultPosition, wxSize (2000, 1000));
-
-    std::string output = execCommand ("ollama list");
+    std::string output = execute_command ("ollama list");
     std::cout << output << '\n';
     std::vector<std::array<std::string, 4> > models;
     // Updated regex to handle spacing and alignment
@@ -224,123 +217,173 @@ private_llm_window::private_llm_window (wxWindow *parent)
 
             std::string model_name = models[1][0];
 
-            wxSizer *full_sizer = new wxBoxSizer (wxVERTICAL);
-
-            std::thread ollama_thread ([this, model_name] () {
-                callOllama (model_name, "hi deepbro");
-            });
-
-            writer = std::thread ([this, web] () {
-                std::string html_cpy;
-                bool inject_thinking = false;
-
-                while (this->alive)
-                    {
-                        HTML_data = "";
-                        char *html;
-                        {
-                            std::unique_lock<std::mutex> lock (
-                                this->buffer_mutex);
-                            if (markdown.find ("<think>") != std::string::npos)
-                                {
-                                    inject_thinking = true;
-                                    markdown.clear ();
-                                    this->conditon.wait (
-                                        lock, [this] { return new_data; });
-                                    continue;
-                                }
-                            else if (markdown.find ("</think>")
-                                     != std::string::npos)
-                                {
-                                    inject_thinking = false;
-                                    markdown.clear ();
-                                    this->conditon.wait (
-                                        lock, [this] { return new_data; });
-                                    continue;
-                                }
-                            else
-                                {
-                                    html = cmark_markdown_to_html (
-                                        markdown.c_str (), markdown.size (),
-                                        CMARK_OPT_VALIDATE_UTF8
-                                            | CMARK_OPT_UNSAFE);
-                                    markdown.clear ();
-                                    this->conditon.wait (
-                                        lock, [this] { return new_data; });
-                                    if (!this->alive)
-                                        break;
-                                }
-                        }
-
-                        html_cpy = std::string (html);
-                        HTML_data += html_cpy;
-                        wxString wx_page = wxString (html_cpy);
-
-                        wx_page.Replace ("\\", "\\\\");
-                        wx_page.Replace ("\"", "\\\"");
-                        wx_page.Replace ("\n", "\\n");
-                        wx_page.Replace ("\r", "\\r");
-                        wx_page.Replace ("\t", "\\t");
-                        wx_page.Replace ("\f", "\\f");
-                        wx_page.Replace ("\b", "\\b");
-
-                        wx_page = "\"" + wx_page + "\"";
-                        if (!this->alive)
-                            break;
-                        wxString js;
-                        if (!inject_thinking)
-                            {
-                                js = "let content = "
-                                     "document.getElementById('content');"
-                                     "if (content) { "
-                                     "  let newContent = "
-                                     + wx_page
-                                     + "; "
-                                       "  content.innerHTML += newContent; "
-                                     + " cleanMathBlocks(content);"
-                                     + "MathJax.typesetPromise([content]);"
-                                     + "}";
-                            }
-                        else
-                            {
-                                js = "let think= "
-                                     "document.getElementById('thinking');"
-                                     "if (think) { "
-                                     "  let newContent = "
-                                     + wx_page
-                                     + "; "
-                                       "  think.innerHTML += newContent; "
-                                       "}";
-                            }
-
-                        if (done)
-                            {
-                                js = "let content = "
-                                     "document.getElementById('content');"
-                                     "if (content) { "
-                                     "  let newContent = "
-                                     + wx_page
-                                     + "; "
-                                       "  content.innerHTML += newContent; "
-                                     + " cleanMathBlocksAfterDone(content);"
-                                     + "MathJax.typesetPromise([content]);"
-                                     + "}";
-                            }
-
-                        std::cout << html << '\n';
-
-                        if (!this->alive)
-                            break;
-                        wxGetApp ().CallAfter (
-                            [web, js] () { web->RunScriptAsync (js, NULL); });
-
-                        this->new_data = false;
-                    }
-            });
-            web->SetPage (HTML_complete, "text/html;charset=UTF-8");
-            ollama_thread.detach ();
-            writer.detach ();
+            call_ollama (model_name, prompt);
         }
+}
+
+void
+private_llm_window::on_click_send_prompt_button (wxWebViewEvent &event)
+{
+    std::cout << "user just sent prompt: " << event.GetString () << '\n';
+}
+
+void
+private_llm_window::write_response ()
+{
+    std::string html_cpy;
+    bool inject_thinking = false;
+
+    std::string think_id = "think" + std::to_string (number_of_divs);
+    std::string content_id = "content" + std::to_string (number_of_divs);
+
+    number_of_divs++;
+
+    wxString crafted_injection = pre_think + think_id + post_think_pre_content
+                                 + content_id + post_content;
+
+    crafted_injection.Replace ("\\", "\\\\");
+    crafted_injection.Replace ("\"", "\\\"");
+    crafted_injection.Replace ("\n", "\\n");
+    crafted_injection.Replace ("\r", "\\r");
+    crafted_injection.Replace ("\t", "\\t");
+    crafted_injection.Replace ("\f", "\\f");
+    crafted_injection.Replace ("\b", "\\b");
+
+    crafted_injection = "\"" + crafted_injection + "\"";
+
+    wxString javasript = "let client = "
+                         "document.getElementById('client');"
+                         "if (client) { "
+                         "  let newContent = "
+                         + crafted_injection
+                         + ";"
+                           "  client.innerHTML += newContent; "
+                           "}";
+
+    wxGetApp ().CallAfter (
+        [this, javasript] () { web->RunScriptAsync (javasript, NULL); });
+
+    while (this->alive)
+        {
+            HTML_data = "";
+            char *html;
+            {
+                std::unique_lock<std::mutex> lock (this->buffer_mutex);
+                this->conditon.wait (lock, [this] { return new_data; });
+                if (!this->alive)
+                    break;
+                if (markdown.find ("<think>") != std::string::npos)
+                    {
+                        inject_thinking = true;
+                    }
+                else if (markdown.find ("</think>") != std::string::npos)
+                    {
+                        inject_thinking = false;
+                    }
+
+                html = cmark_markdown_to_html (
+                    markdown.c_str (), markdown.size (),
+                    CMARK_OPT_VALIDATE_UTF8 | CMARK_OPT_UNSAFE);
+                markdown.clear ();
+            }
+            html_cpy = std::string (html);
+            HTML_data += html_cpy;
+            wxString wx_page = wxString (html_cpy);
+
+            wx_page.Replace ("\\", "\\\\");
+            wx_page.Replace ("\"", "\\\"");
+            wx_page.Replace ("\n", "\\n");
+            wx_page.Replace ("\r", "\\r");
+            wx_page.Replace ("\t", "\\t");
+            wx_page.Replace ("\f", "\\f");
+            wx_page.Replace ("\b", "\\b");
+
+            wx_page = "\"" + wx_page + "\"";
+            if (!this->alive)
+                break;
+            wxString js;
+            if (!inject_thinking)
+                {
+                    js = "let content = "
+                         "document.getElementById('"
+                         + content_id
+                         + "');"
+                           "if (content) { "
+                           "  let newContent = "
+                         + wx_page
+                         + "; "
+                           "  content.innerHTML += newContent; "
+                         + " cleanMathBlocks(content);"
+                         + "MathJax.typesetPromise([content]);" + "}";
+                }
+            else
+                {
+                    wx_page.Replace ("<p>", R"(<p class="ba94db8a">)", true);
+                    js = "let think= "
+                         "document.getElementById('"
+                         + think_id
+                         + "');"
+                           "if (think) { "
+                           "  let newContent = "
+                         + wx_page
+                         + "; "
+                           "  think.innerHTML += newContent; "
+                           "}";
+                }
+
+            if (done)
+                {
+                    std::string id
+                        = "content" + std::to_string (number_of_divs);
+                    js = "let content = "
+                         "document.getElementById('"
+                         + content_id
+                         + "');"
+                           "if (content) { "
+                           "  let newContent = "
+                         + wx_page
+                         + "; "
+                           "  content.innerHTML += newContent; "
+                         + " cleanMathBlocksAfterDone(content);"
+                         + "MathJax.typesetPromise([content]);" + "}";
+                }
+
+            std::cout << wx_page << '\n';
+
+            if (!this->alive)
+                break;
+            wxGetApp ().CallAfter (
+                [this, js] () { web->RunScriptAsync (js, NULL); });
+
+            this->new_data = false;
+        }
+}
+
+private_llm_window::private_llm_window (wxWindow *parent)
+    : wxWindow (parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
+{
+    wxSizer *sizer_v1 = new wxBoxSizer (wxVERTICAL);
+    wxSizer *sizer_v2 = new wxBoxSizer (wxVERTICAL);
+
+    wxPanel *panel = new wxPanel (this);
+    web = wxWebView::New (panel, wxID_ANY, wxWebViewDefaultURLStr,
+                          wxDefaultPosition, wxSize (2000, 1000));
+
+    web->SetPage (HTML_complete, "text/html;charset=UTF-8");
+    web->Bind (wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED,
+               &private_llm_window::on_click_send_prompt_button, this);
+
+    /*
+    button_prompt->Bind (wxEVT_BUTTON, [this] (wxCommandEvent &evt) {
+        std::cout << "EVT BUTTON WHUATTT ???? " << '\n';
+        writer_thread
+            = std::thread (&private_llm_window::write_response, this);
+        send_prompt_thread
+            = std::thread (&private_llm_window::send_prompt, "hello", this);
+        writer_thread.detach ();
+        send_prompt_thread.detach ();
+    });
+    */
 
     sizer_v2->Add (web, 1, wxEXPAND | wxALL, 5);
 
