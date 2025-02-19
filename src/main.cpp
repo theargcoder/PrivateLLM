@@ -246,6 +246,8 @@ private_llm_window::write_response ()
     wxString crafted_injection = pre_think + think_id + post_think_pre_content
                                  + content_id + post_content;
 
+    std::cout << crafted_injection << '\n';
+
     crafted_injection.Replace ("\\", "\\\\");
     crafted_injection.Replace ("\"", "\\\"");
     crafted_injection.Replace ("\n", "\\n");
@@ -321,7 +323,7 @@ private_llm_window::write_response ()
                 }
             else
                 {
-                    wx_page.Replace ("<p>", R"(<p class="ba94db8a">)", true);
+                    wx_page.Replace ("<p>", R"(<p class=\"ba94db8a\">)", true);
                     js = "let think= "
                          "document.getElementById('"
                          + think_id
