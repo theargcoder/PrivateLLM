@@ -180,7 +180,7 @@ private_llm_window::execute_command (const char *cmd)
 }
 
 void
-private_llm_window::send_prompt (std::string &prompt)
+private_llm_window::send_prompt (std::string prompt)
 {
     std::string output = execute_command ("ollama list");
     std::cout << output << '\n';
@@ -225,6 +225,11 @@ void
 private_llm_window::on_click_send_prompt_button (wxWebViewEvent &event)
 {
     std::cout << "user just sent prompt: " << event.GetString () << '\n';
+    send_prompt_thread = std::thread (&private_llm_window::send_prompt, this,
+                                      std::string (event.GetString ()));
+    writer_thread = std::thread (&private_llm_window::write_response, this);
+    writer_thread.detach ();
+    send_prompt_thread.detach ();
 }
 
 void
@@ -265,7 +270,6 @@ private_llm_window::write_response ()
 
     while (this->alive)
         {
-            HTML_data = "";
             char *html;
             {
                 std::unique_lock<std::mutex> lock (this->buffer_mutex);
@@ -287,7 +291,6 @@ private_llm_window::write_response ()
                 markdown.clear ();
             }
             html_cpy = std::string (html);
-            HTML_data += html_cpy;
             wxString wx_page = wxString (html_cpy);
 
             wx_page.Replace ("\\", "\\\\");
@@ -369,6 +372,7 @@ private_llm_window::private_llm_window (wxWindow *parent)
     web = wxWebView::New (panel, wxID_ANY, wxWebViewDefaultURLStr,
                           wxDefaultPosition, wxSize (2000, 1000));
 
+    web->AddScriptMessageHandler ("wx_msg");
     web->SetPage (HTML_complete, "text/html;charset=UTF-8");
     web->Bind (wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED,
                &private_llm_window::on_click_send_prompt_button, this);
