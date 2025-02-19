@@ -74,7 +74,7 @@ class private_llm_window : public wxWindow
     void on_click_send_prompt_button (wxWebViewEvent &event);
 
   private:
-    std::string markdown, HTML_data;
+    std::string markdown;
 
   private:
     wxString HTML_complete = wxString (FULL_DOC);
@@ -93,7 +93,7 @@ class private_llm_window : public wxWindow
     std::string execute_command (const char *cmd);
     void call_ollama (const std::string &model_name,
                       const std::string &prompt);
-    void send_prompt (std::string &prompt);
+    void send_prompt (std::string prompt);
     void write_response ();
 
   private:
