@@ -111,8 +111,7 @@ private_llm_window::start_ollama ()
 
 // Function to call Ollama API
 void
-private_llm_window::call_ollama (const std::string &model_name,
-                                 const std::string &prompt)
+private_llm_window::call_ollama (const std::string &prompt)
 {
     if (!is_ollama_running ())
         {
@@ -128,7 +127,7 @@ private_llm_window::call_ollama (const std::string &model_name,
     if (curl)
         {
             std::string url = "http://localhost:11434/api/generate";
-            std::string jsonData = R"({"model": ")" + model_name
+            std::string jsonData = R"({"model": ")" + curr_model_name
                                    + R"(", "prompt": ")" + prompt + R"("})";
 
             struct curl_slist *headers = nullptr;
@@ -215,9 +214,9 @@ private_llm_window::send_prompt (std::string prompt)
             for (auto pp : models)
                 std::cout << pp[0] << '\n';
 
-            std::string model_name = models[1][0];
+            curr_model_name = models[0][0];
 
-            call_ollama (model_name, prompt);
+            call_ollama (prompt);
         }
 }
 
@@ -225,6 +224,31 @@ void
 private_llm_window::on_click_send_prompt_button (wxWebViewEvent &event)
 {
     std::cout << "user just sent prompt: " << event.GetString () << '\n';
+
+    wxString js = pre_prompt + event.GetString () + post_prompt;
+
+    js.Replace ("\\", "\\\\");
+    js.Replace ("\"", "\\\"");
+    js.Replace ("\n", "\\n");
+    js.Replace ("\r", "\\r");
+    js.Replace ("\t", "\\t");
+    js.Replace ("\f", "\\f");
+    js.Replace ("\b", "\\b");
+
+    js = "\"" + js + "\"";
+
+    wxString javasript = "let client = "
+                         "document.getElementById('client');"
+                         "if (client) { "
+                         "  let newContent = "
+                         + js
+                         + ";"
+                           "  client.innerHTML += newContent; "
+                           "}";
+
+    wxGetApp ().CallAfter (
+        [this, javasript] () { web->RunScriptAsync (javasript, NULL); });
+
     send_prompt_thread = std::thread (&private_llm_window::send_prompt, this,
                                       std::string (event.GetString ()));
     writer_thread = std::thread (&private_llm_window::write_response, this);
@@ -235,7 +259,6 @@ private_llm_window::on_click_send_prompt_button (wxWebViewEvent &event)
 void
 private_llm_window::write_response ()
 {
-    std::string html_cpy;
     bool inject_thinking = false;
 
     std::string think_id = "think" + std::to_string (number_of_divs);
@@ -292,8 +315,7 @@ private_llm_window::write_response ()
                     CMARK_OPT_VALIDATE_UTF8 | CMARK_OPT_UNSAFE);
                 markdown.clear ();
             }
-            html_cpy = std::string (html);
-            wxString wx_page = wxString (html_cpy);
+            wxString wx_page = wxString (html);
 
             wx_page.Replace ("\\", "\\\\");
             wx_page.Replace ("\"", "\\\"");
@@ -357,8 +379,30 @@ private_llm_window::write_response ()
 
             if (!this->alive)
                 break;
-            wxGetApp ().CallAfter (
-                [this, js] () { web->RunScriptAsync (js, NULL); });
+            wxGetApp ().CallAfter ([this, js] () {
+                web->RunScriptAsync (js, NULL);
+
+                if (this->done)
+                    {
+                        {
+                            std::lock_guard<std::mutex> lock (
+                                this->buffer_mutex);
+                            this->alive = false;
+                            this->new_data = true;
+                        }
+                        this->conditon
+                            .notify_one (); // Notify outside the lock
+
+                        if (this->writer_thread.joinable ())
+                            {
+                                this->writer_thread.join ();
+                            }
+                        if (this->send_prompt_thread.joinable ())
+                            {
+                                this->send_prompt_thread.join ();
+                            }
+                    }
+            });
 
             this->new_data = false;
         }

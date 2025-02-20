@@ -12,7 +12,7 @@
 #include <thread>
 
 // markdown parsing (markdown string to HTML string)
-#include "../libcmark/cmark.h"
+#include "../../libcmark/cmark.h"
 
 // CURL for talking to pllam
 #include <curl/curl.h>
@@ -20,9 +20,9 @@
 // to parse json responses str into cpp
 // and also generate json to input into ollama
 // i wrote it lol check the docks its pretty decent
-#include "../libcjparse/src/cjparse.cpp"
-#include "../libcjparse/src/cjparse_json_generate.cpp"
-#include "../libcjparse/src/cjparse_json_parser.cpp"
+#include "../../libcjparse/src/cjparse.cpp"
+#include "../../libcjparse/src/cjparse_json_generate.cpp"
+#include "../../libcjparse/src/cjparse_json_parser.cpp"
 
 #include <wx/app.h>
 #include <wx/aui/auibook.h>
@@ -71,6 +71,9 @@ class private_llm_window : public wxWindow
     int number_of_divs = 0;
 
   private:
+    std::string curr_model_name;
+
+  private:
     void on_click_send_prompt_button (wxWebViewEvent &event);
 
   private:
@@ -91,8 +94,7 @@ class private_llm_window : public wxWindow
     bool is_ollama_running ();
     void start_ollama ();
     std::string execute_command (const char *cmd);
-    void call_ollama (const std::string &model_name,
-                      const std::string &prompt);
+    void call_ollama (const std::string &prompt);
     void send_prompt (std::string prompt);
     void write_response ();
 
