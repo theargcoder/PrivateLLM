@@ -14,15 +14,8 @@
 // markdown parsing (markdown string to HTML string)
 #include "../../libcmark/cmark.h"
 
-// CURL for talking to pllam
-#include <curl/curl.h>
-
-// to parse json responses str into cpp
-// and also generate json to input into ollama
-// i wrote it lol check the docks its pretty decent
-#include "../../libcjparse/src/cjparse.cpp"
-#include "../../libcjparse/src/cjparse_json_generate.cpp"
-#include "../../libcjparse/src/cjparse_json_parser.cpp"
+// llama.cpp lib
+#include <llama.h>
 
 #include <wx/app.h>
 #include <wx/aui/auibook.h>
@@ -91,10 +84,7 @@ class private_llm_window : public wxWindow
     std::atomic<bool> alive{ true };
 
   private:
-    bool is_ollama_running ();
-    void start_ollama ();
-    std::string execute_command (const char *cmd);
-    void call_ollama (const std::string &prompt);
+    int detect_ngl ();
     void send_prompt (std::string prompt);
     void write_response ();
 

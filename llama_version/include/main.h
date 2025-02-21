@@ -52,23 +52,18 @@ class private_llm_window : public wxWindow
         {
             std::lock_guard<std::mutex> lock (this->buffer_mutex);
             this->alive = false;
+            this->done = true;
             this->new_data = true;
         }
         this->conditon.notify_one (); // Notify outside the lock
 
-        if (this->writer_thread.joinable ())
-            {
-                this->writer_thread.join ();
-            }
-        if (this->send_prompt_thread.joinable ())
-            {
-                this->send_prompt_thread.join ();
-            }
+        std::this_thread::sleep_for (std::chrono::milliseconds{ 150 });
     }
 
   private:
     wxWebView *web;
     int number_of_divs = 0;
+    std::string think_id, content_id;
 
   private:
     std::string curr_model_name;
@@ -78,17 +73,20 @@ class private_llm_window : public wxWindow
 
   private:
     std::string markdown;
+    wxString line_buff;
+    wxString JS_buffer;
 
   private:
     wxString HTML_complete = wxString (FULL_DOC);
 
   private:
-    std::thread writer_thread, send_prompt_thread;
-    std::mutex buffer_mutex;          // for thread safety
-    std::condition_variable conditon; // for thread coordination
+    std::vector<std::thread> writer_thread, send_prompt_thread,
+        update_web_thread;
+    std::mutex buffer_mutex, update_web_mutex; // for thread safety
+    std::condition_variable conditon;          // for thread coordination
     bool new_data = false;
-    bool done = false;
-    std::atomic<bool> alive{ true };
+    std::atomic<bool> alive{ true }, done = { false },
+                                     inject_thinking = { false };
 
   private:
     bool is_ollama_running ();

@@ -50,11 +50,8 @@ private_llm_window::curl_write_callback (void *contents, size_t size,
                 if (std::holds_alternative<std::string> (response))
                     {
                         window->markdown += std::get<std::string> (response);
-                        if (window->markdown.find ('\n') != std::string::npos)
-                            {
-                                window->new_data = true;
-                                window->conditon.notify_one ();
-                            }
+                        window->new_data = true;
+                        window->conditon.notify_one ();
                     }
                 else
                     {
@@ -223,6 +220,16 @@ private_llm_window::send_prompt (std::string prompt)
 void
 private_llm_window::on_click_send_prompt_button (wxWebViewEvent &event)
 {
+    if (!this->done && writer_thread.size () != 0)
+        return;
+
+    if (writer_thread.size () != 0)
+        {
+            writer_thread.pop_back ();
+            send_prompt_thread.pop_back ();
+            update_web_thread.pop_back ();
+        }
+
     std::cout << "user just sent prompt: " << event.GetString () << '\n';
 
     wxString js = pre_prompt + event.GetString () + post_prompt;
@@ -249,20 +256,70 @@ private_llm_window::on_click_send_prompt_button (wxWebViewEvent &event)
     wxGetApp ().CallAfter (
         [this, javasript] () { web->RunScriptAsync (javasript, NULL); });
 
-    send_prompt_thread = std::thread (&private_llm_window::send_prompt, this,
-                                      std::string (event.GetString ()));
-    writer_thread = std::thread (&private_llm_window::write_response, this);
-    writer_thread.detach ();
-    send_prompt_thread.detach ();
+    send_prompt_thread.emplace_back (
+        std::thread (&private_llm_window::send_prompt, this,
+                     std::string (event.GetString ())));
+    writer_thread.emplace_back (
+        std::thread (&private_llm_window::write_response, this));
+
+    update_web_thread.emplace_back (std::thread ([this] () {
+        while (!this->done)
+            {
+                wxString JS_cpy;
+                {
+                    std::unique_lock<std::mutex> lock (this->update_web_mutex);
+                    JS_cpy = JS_buffer;
+                    JS_buffer.clear ();
+                }
+                if (JS_cpy.empty ())
+                    {
+                        std::this_thread::sleep_for (
+                            std::chrono::milliseconds{ 100 });
+                    }
+                else
+                    {
+                        if (inject_thinking)
+                            {
+                                JS_cpy
+                                    += "let parentElement = "
+                                       "document.getElementById(\'"
+                                       + this->think_id
+                                       + "\');parentElement.appendChild("
+                                         "latestThinkFragment);"
+                                         "window.latestThinkFragment= "
+                                         "document.createDocumentFragment();";
+                            }
+                        else
+                            {
+                                JS_cpy
+                                    += "let parentElement = "
+                                       "document.getElementById(\'"
+                                       + this->content_id
+                                       + "\');parentElement.appendChild("
+                                         "window.latestContentFragment);"
+                                         "window.latestContentFragment= "
+                                         "document.createDocumentFragment();";
+                            }
+                        std::cout << JS_cpy << "\n\n\n\n\\n\n\n";
+                        wxGetApp ().CallAfter ([this, JS_cpy] () {
+                            this->web->RunScriptAsync (JS_cpy, NULL);
+                        });
+                        std::this_thread::sleep_for (
+                            std::chrono::milliseconds{ 100 });
+                    }
+            }
+    }));
+
+    writer_thread[0].detach ();
+    send_prompt_thread[0].detach ();
+    update_web_thread[0].detach ();
 }
 
 void
 private_llm_window::write_response ()
 {
-    bool inject_thinking = false;
-
-    std::string think_id = "think" + std::to_string (number_of_divs);
-    std::string content_id = "content" + std::to_string (number_of_divs);
+    think_id = "think" + std::to_string (number_of_divs);
+    content_id = "content" + std::to_string (number_of_divs);
 
     number_of_divs++;
 
@@ -281,13 +338,32 @@ private_llm_window::write_response ()
 
     crafted_injection = "\"" + crafted_injection + "\"";
 
-    wxString javasript = "let client = "
-                         "document.getElementById('client');"
-                         "if (client) { "
+    wxString javasript = "let client = document.getElementById('client');"
+                         "if (client) {"
                          "  let newContent = "
                          + crafted_injection
                          + ";"
-                           "  client.innerHTML += newContent; "
+                           "  client.innerHTML += newContent;"
+                           "  let thinkElement = document.getElementById('"
+                         + think_id
+                         + "');"
+                           "  let contentElement = document.getElementById('"
+                         + content_id
+                         + "');"
+                           "  if (thinkElement) {"
+                           "    window.latestThinkFragment = "
+                           "document.createDocumentFragment();"
+                           "    "
+                           "window.latestThinkFragment.appendChild("
+                           "thinkElement.cloneNode(true));"
+                           "  }"
+                           "  if (contentElement) {"
+                           "    window.latestContentFragment = "
+                           "document.createDocumentFragment();"
+                           "    "
+                           "window.latestContentFragment.appendChild("
+                           "contentElement.cloneNode(true));"
+                           "  }"
                            "}";
 
     wxGetApp ().CallAfter (
@@ -295,7 +371,7 @@ private_llm_window::write_response ()
 
     while (this->alive)
         {
-            char *html;
+            wxString latest_token;
             {
                 std::unique_lock<std::mutex> lock (this->buffer_mutex);
                 this->conditon.wait (lock, [this] { return new_data; });
@@ -304,105 +380,257 @@ private_llm_window::write_response ()
                 if (markdown.find ("<think>") != std::string::npos)
                     {
                         inject_thinking = true;
+                        wxString new_paragraph
+                            = R"('<p class=\"ba94db8a\"></p>')";
+                        this->update_web_mutex.lock ();
+                        JS_buffer
+                            += "if (window.latestThinkFragment) {"
+                               "  let newFragment = "
+                               "document.createRange()."
+                               "createContextualFragment("
+                               + new_paragraph
+                               + ");"
+                                 "  if (newFragment.firstElementChild) {"
+                                 "    "
+                                 "window.latestThinkFragment.appendChild("
+                                 "newFragment.firstElementChild);"
+                                 "    if "
+                                 "(window.latestThinkFragment."
+                                 "lastElementChild) {"
+                                 "      window.lastParagraph = "
+                                 "window.latestThinkFragment.lastElementChild;"
+                                 "    }"
+                                 "  }"
+                                 "}";
+                        this->update_web_mutex.unlock ();
+                        markdown.clear ();
+                        continue;
                     }
                 else if (markdown.find ("</think>") != std::string::npos)
                     {
                         inject_thinking = false;
+                        wxString new_paragraph = R"('<p></p>')";
+                        this->update_web_mutex.lock ();
+                        JS_buffer
+                            += "if (window.latestContentFragment) {"
+                               "  let newFragment = "
+                               "document.createRange()."
+                               "createContextualFragment("
+                               + new_paragraph
+                               + ");"
+                                 "  if (newFragment.firstElementChild) {"
+                                 "    "
+                                 "window.latestContentFragment.appendChild("
+                                 "newFragment.firstElementChild);"
+                                 "    if "
+                                 "(window.latestContentFragment."
+                                 "lastElementChild) {"
+                                 "      window.lastParagraph = "
+                                 "window.latestContentFragment."
+                                 "lastElementChild;"
+                                 "    }"
+                                 "  }"
+                                 "}";
+                        this->update_web_mutex.unlock ();
+                        markdown.clear ();
+                        continue;
                     }
 
-                html = cmark_markdown_to_html (
-                    markdown.c_str (), markdown.size (),
-                    CMARK_OPT_VALIDATE_UTF8 | CMARK_OPT_UNSAFE);
+                latest_token = wxString (markdown);
                 markdown.clear ();
             }
-            wxString wx_page = wxString (html);
 
-            wx_page.Replace ("\\", "\\\\");
-            wx_page.Replace ("\"", "\\\"");
-            wx_page.Replace ("\n", "\\n");
-            wx_page.Replace ("\r", "\\r");
-            wx_page.Replace ("\t", "\\t");
-            wx_page.Replace ("\f", "\\f");
-            wx_page.Replace ("\b", "\\b");
+            line_buff += latest_token;
 
-            wx_page = "\"" + wx_page + "\"";
             if (!this->alive)
                 break;
-            wxString js;
+            if (line_buff.find ("\n") != wxNOT_FOUND)
+                {
+                    if (!inject_thinking)
+                        {
+                            char *html = cmark_markdown_to_html (
+                                line_buff.c_str (), line_buff.size (),
+                                CMARK_OPT_VALIDATE_UTF8 | CMARK_OPT_UNSAFE);
+                            line_buff = wxString (html, strlen (html));
+                            line_buff.Replace ("\\", "\\\\");
+                            line_buff.Replace ("\"", "\\\"");
+                            line_buff.Replace ("\n", "\\n");
+                            line_buff.Replace ("\r", "\\r");
+                            line_buff.Replace ("\t", "\\t");
+                            line_buff.Replace ("\f", "\\f");
+                            line_buff.Replace ("\b", "\\b");
+
+                            line_buff = '\'' + line_buff + '\'';
+                            if (line_buff != "''")
+                                {
+                                    this->update_web_mutex.lock ();
+
+                                    JS_buffer += "if (window.lastParagraph) {"
+                                                 "  let newElement = "
+                                                 "document.createRange()."
+                                                 "createContextualFragment("
+                                                 + line_buff
+                                                 + ").firstElementChild;"
+                                                   "  if (newElement) {"
+                                                   "    "
+                                                   "window.lastParagraph."
+                                                   "replaceWith(newElement);"
+                                                   "    window.lastParagraph "
+                                                   "= newElement;"
+                                                   "  }"
+                                                   "}";
+
+                                    this->update_web_mutex.unlock ();
+                                }
+
+                            wxString new_paragraph = "'<p></p>'";
+                            this->update_web_mutex.lock ();
+                            JS_buffer
+                                += "if (window.latestContentFragment) {"
+                                   "  let newFragment = "
+                                   "document.createRange()."
+                                   "createContextualFragment("
+                                   + new_paragraph
+                                   + ");"
+                                     "  if (newFragment.firstElementChild) {"
+                                     "    "
+                                     "window.latestContentFragment."
+                                     "appendChild("
+                                     "newFragment.firstElementChild);"
+                                     "    if "
+                                     "(window.latestContentFragment."
+                                     "lastElementChild) {"
+                                     "      window.lastParagraph = "
+                                     "window.latestContentFragment."
+                                     "lastElementChild;"
+                                     "    }"
+                                     "  }"
+                                     "}";
+                            this->update_web_mutex.unlock ();
+                        }
+                    else
+                        {
+                            wxString new_paragraph
+                                = "'<p class=\\\"ba94db8a\\\"></p>'";
+                            line_buff = "<p class=\\\"ba94db8a\\\">"
+                                        + line_buff + "</p>";
+
+                            line_buff.Replace ("\\", "\\\\");
+                            line_buff.Replace ("\"", "\\\"");
+                            line_buff.Replace ("\n", "\\n");
+                            line_buff.Replace ("\r", "\\r");
+                            line_buff.Replace ("\t", "\\t");
+                            line_buff.Replace ("\f", "\\f");
+                            line_buff.Replace ("\b", "\\b");
+
+                            line_buff = '\'' + line_buff + '\'';
+                            if (line_buff != "''")
+                                {
+                                    this->update_web_mutex.lock ();
+
+                                    JS_buffer += "if (window.lastParagraph) {"
+                                                 "  let newElement = "
+                                                 "document.createRange()."
+                                                 "createContextualFragment("
+                                                 + line_buff
+                                                 + ").firstElementChild;"
+                                                   "  if (newElement) {"
+                                                   "    "
+                                                   "window.lastParagraph."
+                                                   "replaceWith(newElement);"
+                                                   "    window.lastParagraph "
+                                                   "= newElement;"
+                                                   "  }"
+                                                   "}";
+
+                                    this->update_web_mutex.unlock ();
+                                }
+                            this->update_web_mutex.lock ();
+                            JS_buffer
+                                += "if (window.latestThinkFragment) {"
+                                   "  let newFragment = "
+                                   "document.createRange()."
+                                   "createContextualFragment("
+                                   + new_paragraph
+                                   + ");"
+                                     "  if (newFragment.firstElementChild) {"
+                                     "    "
+                                     "window.latestThinkFragment.appendChild("
+                                     "newFragment.firstElementChild);"
+                                     "    if "
+                                     "(window.latestThinkFragment."
+                                     "lastElementChild) {"
+                                     "      window.lastParagraph = "
+                                     "window.latestThinkFragment."
+                                     "lastElementChild;"
+                                     "    }"
+                                     "  }"
+                                     "}";
+                            this->update_web_mutex.unlock ();
+                        }
+                    line_buff = "";
+                    continue;
+                }
+
+            latest_token.Replace ("\\", "\\\\");
+            latest_token.Replace ("\"", "\\\"");
+            latest_token.Replace ("\n", "\\n");
+            latest_token.Replace ("\r", "\\r");
+            latest_token.Replace ("\t", "\\t");
+            latest_token.Replace ("\f", "\\f");
+            latest_token.Replace ("\b", "\\b");
+
+            latest_token = "\"" + latest_token + "\"";
+
+            // --- In your C++ injection code, when handling a new token ---
             if (!inject_thinking)
                 {
-                    js = "let content = "
-                         "document.getElementById('"
-                         + content_id
-                         + "');"
-                           "if (content) { "
-                           "  let newContent = "
-                         + wx_page
-                         + "; "
-                           "  content.innerHTML += newContent; "
-                         + " cleanMathBlocks(content);"
-                         + "MathJax.typesetPromise([content]);" + "}";
+                    this->update_web_mutex.lock ();
+                    JS_buffer
+                        += "if (window.latestContentFragment && "
+                           "window.latestContentFragment.lastElementChild) {"
+                           "  "
+                           "window.latestContentFragment.lastElementChild."
+                           "textContent += "
+                           + latest_token
+                           + ";"
+                             "  window.lastParagraph = "
+                             "window.latestContentFragment.lastElementChild;"
+                             "}";
+                    this->update_web_mutex.unlock ();
                 }
             else
                 {
-                    wx_page.Replace ("<p>", R"(<p class=\"ba94db8a\">)", true);
-                    js = "let think= "
-                         "document.getElementById('"
-                         + think_id
-                         + "');"
-                           "if (think) { "
-                           "  let newContent = "
-                         + wx_page
-                         + "; "
-                           "  think.innerHTML += newContent; "
-                           "}";
+                    this->update_web_mutex.lock ();
+                    JS_buffer
+                        += "if (window.latestThinkFragment && "
+                           "window.latestThinkFragment.lastElementChild) {"
+                           "  "
+                           "window.latestThinkFragment.lastElementChild."
+                           "textContent += "
+                           + latest_token
+                           + ";"
+                             "  window.lastParagraph = "
+                             "window.latestThinkFragment.lastElementChild;"
+                             "}";
+                    this->update_web_mutex.unlock ();
                 }
 
             if (done)
                 {
-                    std::string id
-                        = "content" + std::to_string (number_of_divs);
-                    js = "let content = "
-                         "document.getElementById('"
-                         + content_id
-                         + "');"
-                           "if (content) { "
-                           "  let newContent = "
-                         + wx_page
-                         + "; "
-                           "  content.innerHTML += newContent; "
-                         + " cleanMathBlocksAfterDone(content);"
-                         + "MathJax.typesetPromise([content]);" + "}";
+                    this->update_web_mutex.lock ();
+                    JS_buffer.RemoveLast ();
+                    JS_buffer += " cleanMathBlocksAfterDone(content); }";
+                    this->update_web_mutex.unlock ();
+                    wxGetApp ().CallAfter ([this] () {
+                        std::unique_lock<std::mutex> lock (update_web_mutex);
+                        this->web->RunScriptAsync (JS_buffer, NULL);
+                        JS_buffer.clear ();
+                    });
                 }
-
-            std::cout << wx_page << '\n';
 
             if (!this->alive)
                 break;
-            wxGetApp ().CallAfter ([this, js] () {
-                web->RunScriptAsync (js, NULL);
-
-                if (this->done)
-                    {
-                        {
-                            std::lock_guard<std::mutex> lock (
-                                this->buffer_mutex);
-                            this->alive = false;
-                            this->new_data = true;
-                        }
-                        this->conditon
-                            .notify_one (); // Notify outside the lock
-
-                        if (this->writer_thread.joinable ())
-                            {
-                                this->writer_thread.join ();
-                            }
-                        if (this->send_prompt_thread.joinable ())
-                            {
-                                this->send_prompt_thread.join ();
-                            }
-                    }
-            });
 
             this->new_data = false;
         }
@@ -422,18 +650,6 @@ private_llm_window::private_llm_window (wxWindow *parent)
     web->SetPage (HTML_complete, "text/html;charset=UTF-8");
     web->Bind (wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED,
                &private_llm_window::on_click_send_prompt_button, this);
-
-    /*
-    button_prompt->Bind (wxEVT_BUTTON, [this] (wxCommandEvent &evt) {
-        std::cout << "EVT BUTTON WHUATTT ???? " << '\n';
-        writer_thread
-            = std::thread (&private_llm_window::write_response, this);
-        send_prompt_thread
-            = std::thread (&private_llm_window::send_prompt, "hello", this);
-        writer_thread.detach ();
-        send_prompt_thread.detach ();
-    });
-    */
 
     sizer_v2->Add (web, 1, wxEXPAND | wxALL, 5);
 
