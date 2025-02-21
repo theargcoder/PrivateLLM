@@ -23,201 +23,76 @@ class myApp : public wxApp
 wxDECLARE_APP (myApp);
 wxIMPLEMENT_APP (myApp);
 
-size_t
-private_llm_window::curl_write_callback (void *contents, size_t size,
-                                         size_t nmemb, void *user_data)
-{
-    size_t totalSize = size * nmemb;
-
-    private_llm_window *window = static_cast<private_llm_window *> (user_data);
-    {
-        std::lock_guard<std::mutex> lock (window->buffer_mutex);
-        std::string str_temp;
-        str_temp.assign ((char *)contents, totalSize);
-        cjparse json (str_temp, window->ignore_pattern);
-        if (json.is_container_neither_object_or_array ())
-            {
-                std::cout << "we got an NEITHER OBJ OR ARR as response.... "
-                          << '\n';
-                return totalSize; // ollama responded with non
-                // json we are beyond
-                // fucked;
-            }
-        else if (json.is_container_an_object ())
-            {
-                cjparse::json_value response
-                    = json.return_the_value ("response");
-                if (std::holds_alternative<std::string> (response))
-                    {
-                        window->markdown += std::get<std::string> (response);
-                        if (window->markdown.find ('\n') != std::string::npos)
-                            {
-                                window->new_data = true;
-                                window->conditon.notify_one ();
-                            }
-                    }
-                else
-                    {
-                        // JSON object named 'response' didn't have value
-                        // string so ignore
-                    }
-                cjparse::json_value done_value
-                    = json.return_the_value ("done");
-                if (std::holds_alternative<bool> (done_value))
-                    {
-                        bool done_bool = std::get<bool> (done_value);
-                        if (done_bool)
-                            {
-                                std::cout << "we are done here " << '\n';
-                                window->new_data = true;
-                                window->done = true;
-                                window->conditon.notify_one ();
-                            }
-                    }
-            }
-        else if (json.is_container_an_array ())
-            {
-                std::cout << "we got an array as a response.... " << '\n';
-                // process JSON array formatted response (shouldn't happen)
-            }
-    }
-
-    return totalSize;
-}
-
-bool
-private_llm_window::is_ollama_running ()
-{
-    CURL *curl = curl_easy_init ();
-    if (!curl)
-        return false;
-
-    curl_easy_setopt (curl, CURLOPT_URL,
-                      "http://localhost:11434/api/generate");
-    curl_easy_setopt (curl, CURLOPT_NOBODY, 1L); // HEAD request
-    CURLcode res = curl_easy_perform (curl);
-    curl_easy_cleanup (curl);
-
-    return (res == CURLE_OK); // Returns true if server responds
-}
-
-void
-private_llm_window::start_ollama ()
-{
-    std::cout << "Starting Ollama server..." << std::endl;
-    std::system ("ollama serve &"); // Run in the background
-    std::this_thread::sleep_for (std::chrono::seconds (2)); // Wait for startup
-}
-
-// Function to call Ollama API
-void
-private_llm_window::call_ollama (const std::string &prompt)
-{
-    if (!is_ollama_running ())
-        {
-            start_ollama (); // Start Ollama if it's not running
-        }
-
-    CURL *curl;
-    CURLcode res;
-
-    curl_global_init (CURL_GLOBAL_ALL);
-    curl = curl_easy_init ();
-
-    if (curl)
-        {
-            std::string url = "http://localhost:11434/api/generate";
-            std::string jsonData = R"({"model": ")" + curr_model_name
-                                   + R"(", "prompt": ")" + prompt + R"("})";
-
-            struct curl_slist *headers = nullptr;
-            headers = curl_slist_append (headers,
-                                         "Content-Type: application/json");
-
-            curl_easy_setopt (curl, CURLOPT_URL, url.c_str ());
-            curl_easy_setopt (curl, CURLOPT_POST, 1L);
-            curl_easy_setopt (curl, CURLOPT_POSTFIELDS, jsonData.c_str ());
-            curl_easy_setopt (curl, CURLOPT_HTTPHEADER, headers);
-            curl_easy_setopt (curl, CURLOPT_WRITEFUNCTION,
-                              private_llm_window::curl_write_callback);
-            curl_easy_setopt (curl, CURLOPT_WRITEDATA, this);
-
-            res = curl_easy_perform (curl);
-            if (res != CURLE_OK)
-                {
-                    std::cerr << "cURL error: " << curl_easy_strerror (res)
-                              << std::endl;
-                }
-
-            curl_slist_free_all (headers);
-            curl_easy_cleanup (curl);
-        }
-
-    curl_global_cleanup ();
-}
-
-std::string
-private_llm_window::execute_command (const char *cmd)
-{
-    std::array<char, 128> buffer;
-    std::string result;
-
-    // Open a pipe to run the command
-    std::unique_ptr<FILE, decltype (&pclose)> pipe (popen (cmd, "r"), pclose);
-    if (!pipe)
-        {
-            throw std::runtime_error ("popen() failed!");
-        }
-
-    // Read the command output
-    while (fgets (buffer.data (), buffer.size (), pipe.get ()) != nullptr)
-        {
-            result += buffer.data ();
-        }
-
-    return result;
-}
-
 void
 private_llm_window::send_prompt (std::string prompt)
 {
-    std::string output = execute_command ("ollama list");
-    std::cout << output << '\n';
-    std::vector<std::array<std::string, 4> > models;
-    // Updated regex to handle spacing and alignment
-    std::regex pattern (R"(^(\S+)\s+(\S+)\s+(\d+\.\d+\s+GB)\s+(.+?)\s*$)");
-    std::smatch match;
+    const std::string model_path
+        = "/Users/luccalabattaglia/Library/Caches/llama.cpp/"
+          "unsloth_DeepSeek-R1-Distill-Qwen-7B-GGUF_DeepSeek-R1-Distill-Qwen-"
+          "7B-Q4_K_M.gguf";
 
-    // Split the output into lines
-    std::istringstream stream (output);
-    std::string line;
-    while (std::getline (stream, line))
+    // load dynamic backends
+    ggml_backend_load_all ();
+
+    llama_model_params model_params = llama_model_default_params ();
+
+    llama_model *model
+        = llama_model_load_from_file (model_path.c_str (), model_params);
+
+    if (!model)
         {
-            std::smatch match;
-            if (std::regex_match (line, match, pattern))
-                {
-                    if (match.size () >= 5)
-                        {
-                            models.push_back (
-                                { match[1].str (), match[2].str (),
-                                  match[3].str (), match[4].str () });
-                        }
-                }
+            fprintf (stderr, "%s: error: unable to load model\n", __func__);
+            return;
         }
 
-    if (models.size () == 0)
-        {
-            // bewond fucked
-        }
-    else
-        {
-            for (auto pp : models)
-                std::cout << pp[0] << '\n';
+    const llama_vocab *vocab = llama_model_get_vocab (model);
 
-            curr_model_name = models[0][0];
+    llama_context_params ctx_params = llama_context_default_params ();
 
-            call_ollama (prompt);
+    llama_context *ctx = llama_init_from_model (model, ctx_params);
+
+    if (!ctx)
+        {
+            fprintf (stderr, "%s: error: failed to create the llama_context\n",
+                     __func__);
+            return;
         }
+
+    llama_sampler *smpl
+        = llama_sampler_chain_init (llama_sampler_chain_default_params ());
+    llama_sampler_chain_add (smpl, llama_sampler_init_min_p (0.05f, 1));
+    llama_sampler_chain_add (smpl, llama_sampler_init_temp (0.8f));
+    llama_sampler_chain_add (smpl,
+                             llama_sampler_init_dist (LLAMA_DEFAULT_SEED));
+
+    std::vector<llama_chat_message> messages;
+    std::vector<char> formatted;
+
+    const char *tmpl = llama_model_chat_template (model, nullptr);
+
+    messages.push_back ({ "user", strdup (prompt.c_str ()) });
+
+    int new_len = llama_chat_apply_template (
+        tmpl, messages.data (), messages.size (), true, formatted.data (),
+        formatted.size ());
+
+    if (new_len > (int)formatted.size ())
+        {
+            formatted.resize (new_len);
+            new_len = llama_chat_apply_template (
+                tmpl, messages.data (), messages.size (), true,
+                formatted.data (), formatted.size ());
+        }
+
+    if (new_len < 0)
+        {
+            fprintf (stderr, "failed to apply the chat template\n");
+            return;
+        }
+
+    llama_sampler_free (smpl);
+    llama_free (ctx);
+    llama_model_free (model);
 }
 
 void
@@ -429,9 +304,8 @@ private_llm_window::private_llm_window (wxWindow *parent)
         writer_thread
             = std::thread (&private_llm_window::write_response, this);
         send_prompt_thread
-            = std::thread (&private_llm_window::send_prompt, "hello", this);
-        writer_thread.detach ();
-        send_prompt_thread.detach ();
+            = std::thread (&private_llm_window::send_prompt, "hello",
+    this); writer_thread.detach (); send_prompt_thread.detach ();
     });
     */
 

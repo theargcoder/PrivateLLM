@@ -6609,6 +6609,10 @@
         </div>
     </div>
     <script>
+        let lastParagraph = null; // Stores the latest <p>
+        let latestThinkFragment = null; 
+        let latestContentFragment = null; 
+
         document.addEventListener('DOMContentLoaded', function() {
             const button = document.getElementById('send-prompt');
             const textarea = document.getElementById('chat-input');

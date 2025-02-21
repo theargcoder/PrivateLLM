@@ -6612,6 +6612,8 @@ std::string FULL_DOC =
         </div>
     </div>
     <script>
+        let lastParagraph = null; // Stores the latest <p>
+
         document.addEventListener('DOMContentLoaded', function() {
             const button = document.getElementById('send-prompt');
             const textarea = document.getElementById('chat-input');
